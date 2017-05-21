@@ -1,20 +1,22 @@
 import UI.NCurses
 import System.Directory
+import Control.Monad.IO.Class
 
 main = runCurses $ do
            setEcho False
            w <- defaultWindow
-           drawLs 1 w
-           -- render
-           handleEvents w jkHandler 1 (- 1)
+           drawLs 0 w
+           handleEvents w jkHandler 0 (- 1)
 
-drawLs :: Integer -> Window -> Curses ()
-drawLs row w = (return $ lsCwdUpdate >>= \cwd_ls -> return ((mapM render_row $ zip cwd_ls [0..]) >> render)) >> return ()
-             where render_row (path, idx) = updateWindow w $ do setAttribute AttributeUnderline (idx == row)
-                                                                moveCursor idx 20
-                                                                drawString path
-                                                                moveCursor 0 0
-                   lsCwdUpdate = (getCurrentDirectory >>= listDirectory)
+drawLs :: Integer -> Window -> Curses()
+drawLs i w = do ls <- liftIO (getCurrentDirectory >>= listDirectory)
+                mapM (\(dir, idx) -> updateWindow w $ do
+                                     setAttribute AttributeUnderline (idx == i)
+                                     moveCursor idx 20
+                                     drawString dir
+                                     moveCursor 0 0)
+                     $ zip ls [0..]
+                render
 
 jkHandler :: Event -> Integer -> Window -> Curses Integer
 jkHandler (EventCharacter 'j') i w = drawLs (i + 1) w >> return (i + 1)
@@ -30,7 +32,6 @@ handleEvents w f start stop = loop start
                                         Nothing  -> loop st
                                         Just ev' -> let c_next = f ev' st w in do
                                             next <- c_next
-                                            -- render
                                             if next == stop
                                                 then return ()
                                                 else loop next
