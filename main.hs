@@ -24,9 +24,9 @@ main = runCurses $ do
                                     Exit
 
 drawLs :: Integer -> Integer -> Window -> Curses()
-drawLs i off w = do ls <- liftIO (getCurrentDirectory >>= listDirectory >>= return . drop (fromInteger off) . filter ((/= '.') . head))
+drawLs i off w = do ls <- liftIO (getCurrentDirectory >>= listDirectory >>= return . drop (fromInteger off))
                     updateWindow w clear
-                    (_, height) <- screenSize
+                    (height, _) <- screenSize
                     mapM (\(dir, idx) -> do isDir <- liftIO (makeAbsolute dir >>= doesDirectoryExist)
                                             updateWindow w $ do
                                                 setAttribute AttributeUnderline (idx == i)
@@ -50,9 +50,9 @@ getCurrPath i = liftIO $ getCurrentDirectory >>= listDirectory
                                              >>= return . (!! (fromInteger i))
 
 jkHandler :: Event -> WindowState -> Window -> Curses WindowState
-jkHandler (EventCharacter 'j') (WindowState {offset=off, cursorPos=(x,i)}) w = drawLs (i + 1) off w >>
+jkHandler (EventCharacter 'j') (WindowState {offset=off, cursorPos=(x,i)}) w = drawLs (i + 1) (off + 1) w >>
                                                                                return WindowState {offset=i + 1, cursorPos=(x, i + 1)}
-jkHandler (EventCharacter 'k') (WindowState {offset=off, cursorPos=(x,i)}) w = drawLs (i - 1) off w >>
+jkHandler (EventCharacter 'k') (WindowState {offset=off, cursorPos=(x,i)}) w = drawLs (i - 1) (off - 1) w >>
                                                                                return WindowState {offset=i - 1, cursorPos=(x, i - 1)}
 jkHandler (EventCharacter 'l') (WindowState {offset=off, cursorPos=(x,i)}) w = getCurrPath (i + off) >>= setWd >> drawLs 0 0 w >>
                                                                                return WindowState {offset=0, cursorPos=(x, 0)}
