@@ -2,6 +2,7 @@ import UI.NCurses
 import System.Directory
 import System.Process
 import Control.Monad.IO.Class
+import Data.Char
 
 data VimState = Normal { operator :: Char,
                          count :: Int }
@@ -13,15 +14,17 @@ data WindowState = WindowState { editor :: VimState,
                  | Exit
                  deriving Eq
 
+type EventHandler a = Event -> a -> Window -> Curses a
+
 main = runCurses $ do
            setEcho False
            w <- defaultWindow
            drawLs 0 0 w
-           handleEvents w jkHandler (WindowState {editor = Normal { operator = 'j',
-                                                                    count = 1},
-                                                 offset = 0,
-                                                 cursorPos = (0, 0)})
-                                    Exit
+           handleEvents w (updateEditor jkHandler) (WindowState {editor = Normal { operator = 'e',
+                                                                                   count = 0},
+                                                                 offset = 0,
+                                                                 cursorPos = (0, 0)})
+                                                   Exit
 
 drawLs :: Integer -> Integer -> Window -> Curses()
 drawLs i off w = do ls <- liftIO (getCurrentDirectory >>= listDirectory >>= return . drop (fromInteger off))
@@ -49,19 +52,68 @@ getCurrPath :: Integer -> Curses FilePath
 getCurrPath i = liftIO $ getCurrentDirectory >>= listDirectory
                                              >>= return . (!! (fromInteger i))
 
-jkHandler :: Event -> WindowState -> Window -> Curses WindowState
-jkHandler (EventCharacter 'j') (WindowState {offset=off, cursorPos=(x,i)}) w = drawLs (i + 1) (off + 1) w >>
-                                                                               return WindowState {offset=i + 1, cursorPos=(x, i + 1)}
-jkHandler (EventCharacter 'k') (WindowState {offset=off, cursorPos=(x,i)}) w = drawLs (i - 1) (off - 1) w >>
-                                                                               return WindowState {offset=i - 1, cursorPos=(x, i - 1)}
-jkHandler (EventCharacter 'l') (WindowState {offset=off, cursorPos=(x,i)}) w = getCurrPath (i + off) >>= setWd >> drawLs 0 0 w >>
-                                                                               return WindowState {offset=0, cursorPos=(x, 0)}
-jkHandler (EventCharacter 'h') (WindowState {offset=off, cursorPos=(x,i)}) w = setWd ".." >> drawLs 0 0 w >>
-                                                                               return WindowState {offset=0, cursorPos=(x, 0)}
-jkHandler (EventCharacter 'q') (WindowState {offset=off, cursorPos=(x,i)}) w = return Exit
-jkHandler _                    state                                       w = return state
+heightOffset :: Integer -> Integer -> Curses (Integer, Integer)
+heightOffset off curs = do (height, _) <- screenSize
+                           if curs >= height
+                           then return (off + 1, height - 1)
+                           else if curs < 0
+                                then if off == 0 then return (off, 0) else return (off - 1, 0)
+                                else return (off, curs)
 
-handleEvents :: (Eq a) => Window -> (Event -> a -> Window -> Curses a) -> a -> a -> Curses ()
+jkHandler :: Event -> WindowState -> Window -> Curses WindowState
+jkHandler (EventCharacter 'j') (WindowState {offset=off,
+                                             editor=ed,
+                                             cursorPos=(x,i)}) w = heightOffset off (i + 1) >>=
+                                                                   \(no, nc) ->
+                                                                       drawLs nc no w >>
+                                                                       return WindowState {offset=off,
+                                                                                           editor=ed,
+                                                                                           cursorPos=(x, nc)}
+jkHandler (EventCharacter 'k') (WindowState {offset=off,
+                                             editor=ed,
+                                             cursorPos=(x,i)}) w = heightOffset off (i - 1) >>=
+                                                                   \(no, nc) ->
+                                                                       drawLs nc no w >>
+                                                                       return WindowState {offset=off,
+                                                                                           editor=ed, cursorPos=(x, nc)}
+jkHandler (EventCharacter 'l') (WindowState {offset=off,
+                                             editor=ed,
+                                             cursorPos=(x,i)}) w = getCurrPath (i + off) >>= setWd >> drawLs 0 0 w >>
+                                                                   return WindowState {offset=0, editor=ed, cursorPos=(x, 0)}
+jkHandler (EventCharacter 'h') (WindowState {offset=off,
+                                             editor=ed,
+                                             cursorPos=(x,i)}) w = setWd ".." >> drawLs 0 0 w >>
+                                                                   return WindowState {offset=0, editor=ed, cursorPos=(x, 0)}
+jkHandler (EventCharacter 'q') (WindowState {offset=off,
+                                             editor=ed,
+                                             cursorPos=(x,i)}) w = return Exit
+jkHandler (EventCharacter 'H') (WindowState {offset=off,
+                                             editor=ed,
+                                             cursorPos=(x,i)}) w = drawLs 0 off w >> return WindowState {offset=off,
+                                                                                                         editor=ed,
+                                                                                                         cursorPos=(x, 0)}
+jkHandler (EventCharacter 'L') (WindowState {offset=off,
+                                             editor=ed,
+                                             cursorPos=(x,i)}) w = screenSize >>=
+                                                                   \(h, _) ->
+                                                                       drawLs 0 off w >> return WindowState {offset=off,
+                                                                                                             editor=ed,
+                                                                                                             cursorPos=(x, 0)}
+jkHandler _                    state                           w = return state
+
+updateEditor :: (EventHandler WindowState) -> EventHandler WindowState
+updateEditor ev = \e s@(WindowState {editor=ed}) w ->
+                      case e of
+                          (EventCharacter ec) | isDigit ec -> return s {editor = ed {count = (count ed) * 10 + (digitToInt ec)}}
+                                              | otherwise -> foldr (>>) (return . id) $
+                                                                 map (\_ -> ev e s w >>=
+                                                                      \n@(WindowState {offset=off, cursorPos=p}) ->
+                                                                          return $ if n == s then s
+                                                                                   else n {editor = Normal {operator = 'e',
+                                                                                                            count = 0}})
+                                                                 [1..(count ed)]
+
+handleEvents :: (Eq a) => Window -> (EventHandler a) -> a -> a -> Curses ()
 handleEvents w f start stop = loop start
                             where loop st = do
                                     ev <- getEvent w Nothing
