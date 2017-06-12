@@ -2,6 +2,7 @@ import UI.NCurses
 import System.Directory
 import System.Process
 import Control.Monad.IO.Class
+import Control.Monad
 import Data.Char
 
 data VimState = Normal { operator :: Char,
@@ -35,7 +36,7 @@ drawLs i off w = do ls <- liftIO (getCurrentDirectory >>= listDirectory >>= retu
                                                 setAttribute AttributeUnderline (idx == i)
                                                 setAttribute AttributeBold isDir
                                                 moveCursor idx 20
-                                                drawString dir
+                                                drawString (show (idx - i) ++ " " ++ dir)
                                                 moveCursor i 0)
                          $ zip ls [0..(height - 1)]
                     render
@@ -96,22 +97,22 @@ jkHandler (EventCharacter 'L') (WindowState {offset=off,
                                              editor=ed,
                                              cursorPos=(x,i)}) w = screenSize >>=
                                                                    \(h, _) ->
-                                                                       drawLs 0 off w >> return WindowState {offset=off,
-                                                                                                             editor=ed,
-                                                                                                             cursorPos=(x, 0)}
+                                                                       drawLs (h - 1) off w >> return WindowState {offset=off,
+                                                                                                                   editor=ed,
+                                                                                                                   cursorPos=(x, h - 1)}
 jkHandler _                    state                           w = return state
 
 updateEditor :: (EventHandler WindowState) -> EventHandler WindowState
 updateEditor ev = \e s@(WindowState {editor=ed}) w ->
                       case e of
                           (EventCharacter ec) | isDigit ec -> return s {editor = ed {count = (count ed) * 10 + (digitToInt ec)}}
-                                              | otherwise -> foldr (>>) (return . id) $
-                                                                 map (\_ -> ev e s w >>=
-                                                                      \n@(WindowState {offset=off, cursorPos=p}) ->
-                                                                          return $ if n == s then s
-                                                                                   else n {editor = Normal {operator = 'e',
-                                                                                                            count = 0}})
-                                                                 [1..(count ed)]
+                                              | otherwise  -> doThings s w e
+                where doThings s'@(WindowState {editor=ed'}) w e | (count ed') == 0 = ev e s' w
+                                                                 | otherwise        = foldM (\st b -> ev e st w) s' [1..(count ed')] >>=
+                                                                                      \fs@(WindowState {editor=fed}) ->
+                                                                                          return fs {editor = fed {count = 0,
+                                                                                                                   operator = 'e'}}
+
 
 handleEvents :: (Eq a) => Window -> (EventHandler a) -> a -> a -> Curses ()
 handleEvents w f start stop = loop start
